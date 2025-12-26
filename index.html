@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hệ thống Đo Áp Lực Bàn Chân 60x60</title>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #1a1a2e;
+        color: #ffffff;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      header {
+        padding: 20px;
+        text-align: center;
+        background: #16213e;
+        width: 100%;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      }
+
+      .container {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 20px;
+        gap: 20px;
+        width: 95%;
+      }
+
+      #heatmap-container {
+        background: #0f3460;
+        padding: 15px;
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        width: 700px;
+        height: 700px;
+      }
+
+      .dashboard {
+        background: #16213e;
+        padding: 20px;
+        border-radius: 15px;
+        min-width: 250px;
+      }
+
+      .stat-card {
+        background: #0f3460;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 10px;
+        border-left: 5px solid #e94560;
+      }
+
+      .stat-card h3 {
+        margin: 0;
+        font-size: 14px;
+        color: #95a5a6;
+      }
+      .value {
+        color: #ff4d4f; /* số liệu nổi bật */
+        font-size: 26px;
+        font-weight: 700;
+      }
+
+      .unit {
+        color: #ecf0f1; /* đơn vị sáng hơn */
+        font-size: 14px;
+        margin-left: 4px;
+      }
+
+      .stat-card p {
+        margin: 5px 0 0;
+        font-size: 24px;
+        font-weight: bold;
+        color: #e94560;
+      }
+
+      .status-online {
+        color: #2ecc71;
+        font-weight: bold;
+      }
+      .status-offline {
+        color: #e74c3c;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>HỆ THỐNG PHÂN TÍCH ÁP LỰC BÀN CHÂN</h1>
+      <div id="status">
+        Trạng thái: <span class="status-offline">Đang ngắt kết nối</span>
+      </div>
+    </header>
+
+    <div class="container">
+      <div id="heatmap-container">
+        <div id="myHeatmap" style="width: 100%; height: 100%"></div>
+      </div>
+
+      <div class="dashboard">
+        <h2>Thông số</h2>
+        <div class="stat-card">
+          <h3>Áp lực lớn nhất (Max)</h3>
+          <p>
+            <span id="max-val" class="value">0</span>
+            <span class="unit">unit</span>
+          </p>
+        </div>
+        <div class="stat-card">
+          <h3>Tổng lực (Total Load)</h3>
+          <p>
+            <span id="total-val" class="value">0</span>
+            <span class="unit">unit</span>
+          </p>
+        </div>
+        <div class="stat-card">
+          <h3>Độ phân giải</h3>
+          <p>60 x 60 px</p>
+        </div>
+        <button
+          onclick="calibrate()"
+          style="width: 100%; padding: 10px; cursor: pointer"
+        >
+          Hiệu chuẩn (Reset 0)
+        </button>
+      </div>
+    </div>
+
+    <script>
+      // 1. Khởi tạo Ma trận 60x60 giá trị 0 ban đầu
+      const ROWS = 60;
+      const COLS = 60;
+      let matrixData = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+      // 2. Cấu hình biểu đồ Plotly Heatmap
+      const plotData = [
+        {
+          z: matrixData,
+          type: "heatmap",
+          colorscale: "Jet",
+          zmin: 0,
+          zmax: 1023,
+          showscale: true,
+          colorbar: {
+            tickfont: {
+              color: "#ffffff",
+              size: 12,
+            },
+            len: 0.95,
+          },
+        },
+      ];
+
+      const layout = {
+        font: {
+          color: "#ffffff",
+        },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        margin: { t: 10, b: 40, l: 30, r: 60 },
+        xaxis: { showgrid: false, zeroline: false, ticks: "" },
+        yaxis: {
+          automargin: true,
+          showgrid: false,
+          zeroline: false,
+          ticks: "",
+          autorange: "reversed",
+        }, // Đảo ngược Y để giống bàn chân thật
+      };
+
+      Plotly.newPlot("myHeatmap", plotData, layout, { responsive: true });
+
+      // 3. Kết nối Socket.io đến Server (Node.js/Python)
+      const socket = io("http://localhost:3000");
+      const statusEl = document.getElementById("status");
+
+      socket.on("connect", () => {
+        statusEl.innerHTML =
+          'Trạng thái: <span class="status-online">Đang trực tuyến</span>';
+      });
+
+      socket.on("disconnect", () => {
+        statusEl.innerHTML =
+          'Trạng thái: <span class="status-offline">Đang ngắt kết nối</span>';
+      });
+
+      // 4. Nhận dữ liệu thực tế từ STM32 (qua Server)
+      socket.on("updateData", (newData) => {
+        // newData nên là một mảng 2 chiều 60x60 hoặc mảng phẳng 3600 phần tử
+        let formattedData = newData;
+
+        // Cập nhật lên Heatmap (Dùng Plotly.restyle để đạt hiệu năng cao nhất)
+        Plotly.restyle("myHeatmap", "z", [formattedData]);
+
+        // Cập nhật thống kê
+        updateStats(formattedData);
+      });
+
+      function updateStats(data) {
+        let flatData = data.flat();
+        let max = Math.max(...flatData);
+        let total = flatData.reduce((a, b) => a + b, 0);
+
+        document.getElementById("max-val").innerText = max;
+        document.getElementById("total-val").innerText = Math.round(
+          total / 100
+        );
+      }
+
+      function calibrate() {
+        console.log("Đang hiệu chuẩn hệ thống...");
+        // Gửi lệnh hiệu chuẩn về Server nếu cần
+      }
+    </script>
+  </body>
+</html>
